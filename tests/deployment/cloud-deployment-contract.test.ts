@@ -52,6 +52,30 @@ describe("shared cloud deployment contract", () => {
     });
   });
 
+  test("accepts a Cloudflare Pages content origin that needs no content DNS zone", async () => {
+    const parsed = await Effect.runPromise(parseCloudDeploymentInput(
+      cloudflareInput({
+        contentDomain: "artifact-server-content.pages.dev",
+        contentOrigin: {
+          kind: "cloudflare-pages",
+          projectName: "artifact-server-content",
+        },
+        dnsZoneIds: {application: "zone-artifacts"},
+      }),
+    ));
+
+    expect(parsed).toMatchObject({
+      contentDomain: "artifact-server-content.pages.dev",
+      contentOrigin: {
+        kind: "cloudflare-pages",
+        projectName: "artifact-server-content",
+      },
+      dnsZoneIds: {application: "zone-artifacts"},
+      ingress: "public",
+      target: "cloudflare",
+    });
+  });
+
   test("accepts complete Cloudflare OIDC configuration", async () => {
     const [confidentialClient, publicClient] = await Promise.all([
       Effect.runPromise(parseCloudDeploymentInput(cloudflareInput({
@@ -148,6 +172,41 @@ describe("shared cloud deployment contract", () => {
     })],
     ["local Alchemy state outside development", cloudflareInput({
       stateStore: "local",
+    })],
+    ["Cloudflare Pages origin with a content DNS zone", cloudflareInput({
+      contentDomain: "artifact-server-content.pages.dev",
+      contentOrigin: {
+        kind: "cloudflare-pages",
+        projectName: "artifact-server-content",
+      },
+      dnsZoneIds: {application: "zone-artifacts", content: "zone-content"},
+    })],
+    ["Cloudflare Pages origin outside pages.dev", cloudflareInput({
+      contentOrigin: {
+        kind: "cloudflare-pages",
+        projectName: "artifact-server-content",
+      },
+    })],
+    ["Cloudflare Pages origin without the application DNS zone",
+      cloudflareInput({
+        contentDomain: "artifact-server-content.pages.dev",
+        contentOrigin: {
+          kind: "cloudflare-pages",
+          projectName: "artifact-server-content",
+        },
+        dnsZoneIds: null,
+      })],
+    ["Cloudflare Pages project that contradicts the content domain",
+      cloudflareInput({
+        contentDomain: "other-content.pages.dev",
+        contentOrigin: {
+          kind: "cloudflare-pages",
+          projectName: "artifact-server-content",
+        },
+        dnsZoneIds: {application: "zone-artifacts"},
+      })],
+    ["unsupported Cloudflare content origin", cloudflareInput({
+      contentOrigin: {kind: "cloudflare-workers", projectName: "content"},
     })],
     ["invalid Cloudflare compatibility date", cloudflareInput({
       compatibilityDate: "2026-02-31",

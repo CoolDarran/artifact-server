@@ -98,7 +98,7 @@ const ingressCidrs = Schema.Array(ipv4Cidr).check(
   Schema.isMinLength(1),
   Schema.isUnique(),
 );
-const dnsZoneIds = Schema.Struct({
+const distinctDnsZoneIds = Schema.Struct({
   application: providerResourceIdentifier,
   content: providerResourceIdentifier,
 }).check(Schema.makeFilter((value) =>
@@ -106,6 +106,29 @@ const dnsZoneIds = Schema.Struct({
     ? "application and content domains require different DNS zones"
     : undefined
 ));
+
+// A content origin that the provider names itself (a Pages project domain, for
+// example) needs no content DNS zone, so only the application zone is required.
+const applicationDnsZoneIds = Schema.Struct({
+  application: providerResourceIdentifier,
+  content: Schema.optionalKey(providerResourceIdentifier),
+}).check(Schema.makeFilter((value) =>
+  value.content !== undefined && value.application === value.content
+    ? "application and content domains require different DNS zones"
+    : undefined
+));
+
+/** Content origins Cloudflare can present version bytes on. */
+export const CloudflareContentOrigin = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("wildcard-dns"),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("cloudflare-pages"),
+    projectName: cloudflareArtifactsNamespace,
+  }),
+]);
+export type CloudflareContentOrigin = typeof CloudflareContentOrigin.Type;
 
 const sharedInputFields = {
   applicationDomain: hostname,
@@ -117,7 +140,6 @@ const sharedInputFields = {
   contentDomain: hostname,
   databasePlan: Schema.Literals(["small", "standard", "high-availability"]),
   deletionProtection: Schema.Boolean,
-  dnsZoneIds: Schema.optionalKey(dnsZoneIds),
   environment: Schema.Literals(["development", "staging", "production"]),
   ingress: Schema.Literals(["private", "public"]),
   installationName,
@@ -166,6 +188,7 @@ const pulumiInputFields = {
 export const AwsCloudDeploymentInput = Schema.Struct({
   ...sharedInputFields,
   ...pulumiInputFields,
+  dnsZoneIds: Schema.optionalKey(distinctDnsZoneIds),
   existingNetwork: Schema.optionalKey(AwsExistingNetwork),
   privateIngressCidrs: Schema.optionalKey(ingressCidrs),
   target: Schema.Literal("aws"),
@@ -179,6 +202,7 @@ export interface AwsCloudDeploymentInput extends Schema.Schema.Type<
 export const GcpCloudDeploymentInput = Schema.Struct({
   ...sharedInputFields,
   ...pulumiInputFields,
+  dnsZoneIds: Schema.optionalKey(distinctDnsZoneIds),
   existingNetwork: Schema.optionalKey(GcpExistingNetwork),
   target: Schema.Literal("gcp"),
 });
@@ -192,6 +216,8 @@ export const CloudflareCloudDeploymentInput = Schema.Struct({
   cloudflareAccountId: identifier,
   cloudflareArtifactsNamespace: Schema.optionalKey(cloudflareArtifactsNamespace),
   compatibilityDate,
+  contentOrigin: Schema.optionalKey(CloudflareContentOrigin),
+  dnsZoneIds: Schema.optionalKey(applicationDnsZoneIds),
   oidcClientId: Schema.optionalKey(identifier),
   oidcClientSecretRef: Schema.optionalKey(providerResourceIdentifier),
   oidcIssuer: Schema.optionalKey(httpsUrl),
@@ -250,7 +276,35 @@ export const CloudDeploymentInput = uncheckedCloudDeploymentInput.check(
         });
       }
     }
-    if (input.ingress === "public" && input.dnsZoneIds === undefined) {
+    const pagesContentOrigin = input.target === "cloudflare" &&
+        input.contentOrigin?.kind === "cloudflare-pages"
+      ? input.contentOrigin
+      : undefined;
+    if (pagesContentOrigin !== undefined) {
+      const zoneIds = input.dnsZoneIds;
+      if (zoneIds === undefined) {
+        issues.push({
+          issue:
+            "cloudflare-pages content origin requires the application DNS zone",
+          path: ["dnsZoneIds"],
+        });
+      } else if (zoneIds.content !== undefined) {
+        issues.push({
+          issue:
+            "cloudflare-pages content origin must not configure a content DNS zone",
+          path: ["dnsZoneIds", "content"],
+        });
+      }
+      if (
+        input.contentDomain !== `${pagesContentOrigin.projectName}.pages.dev`
+      ) {
+        issues.push({
+          issue:
+            "cloudflare-pages content domain must be <projectName>.pages.dev",
+          path: ["contentDomain"],
+        });
+      }
+    } else if (input.ingress === "public" && input.dnsZoneIds === undefined) {
       issues.push({
         issue: "public ingress requires existing DNS zones for both domains",
         path: ["dnsZoneIds"],

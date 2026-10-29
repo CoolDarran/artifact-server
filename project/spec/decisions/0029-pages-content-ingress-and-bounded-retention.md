@@ -137,3 +137,35 @@ incomplete; no full iteration pass or supported Pages installation is claimed.
 - [Pages Direct Upload](https://developers.cloudflare.com/pages/get-started/direct-upload/)
 - [Pages Service Bindings](https://developers.cloudflare.com/pages/functions/bindings/#service-bindings)
 - [Pages deployment API](https://developers.cloudflare.com/api/resources/pages/subresources/projects/subresources/deployments/methods/create/)
+
+## Implementation plan
+
+Scope chosen for the first increment: make publication, content access, and
+hosted login work end to end. Review previews keep the existing per-lease host
+model, so a lease costs one content-origin alias; reusing version ingress for
+leases stays a later design.
+
+1. Contract: `CloudflareContentOrigin` lets a Cloudflare deployment name a
+   provider-managed content origin. `{"kind": "cloudflare-pages",
+   "projectName": "..."}` requires `contentDomain` to be exactly
+   `<projectName>.pages.dev`, supplies only the application DNS zone, and
+   rejects a content DNS zone. An absent or `wildcard-dns` origin keeps the
+   existing wildcard DNS record and Worker route. This increment is the
+   contract and validation only; no provider behaviour changes yet.
+2. Stack: create the Pages project and its gateway deployment, bind the
+   gateway to the application Worker through a service binding, and stop
+   creating the wildcard content DNS record and Worker route for a Pages
+   origin. The Worker receives the account ID, project name, and a Pages
+   deployment credential.
+3. Runtime: a content-origin port with a Cloudflare Pages adapter that
+   provisions one alias deployment per version host, is idempotent under
+   retry, and records the durable alias-to-version association before
+   publication commits. Publish order becomes: write immutable bytes, prove
+   the alias serves over HTTPS, then commit metadata and the current pointer.
+4. Recovery: an interrupted publication leaves the version unreferenced but
+   recoverable; retrying reuses the same version ID and bytes. Deactivation
+   and revocation stay central and never depend on deleting a Pages
+   deployment.
+5. Verification: contract and adapter tests through real HTTP boundaries,
+   then a staging deployment and a browser login check. Ledger rows stay
+   unverified until those pass.
