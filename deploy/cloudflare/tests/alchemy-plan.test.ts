@@ -229,6 +229,36 @@ describe("Alchemy foundation plan", () => {
     );
   });
 
+  it("refuses a Pages content origin before it can create a wildcard route", async () => {
+    const pagesInput = {
+      ...validDeploymentInput,
+      contentDomain: "artifact-server-content.pages.dev",
+      contentOrigin: {
+        kind: "cloudflare-pages" as const,
+        projectName: "artifact-server-content",
+      },
+      dnsZoneIds: {
+        application: validDeploymentInput.dnsZoneIds.application,
+      },
+    };
+    const scratch = Test.scratchStack(options, "pages-origin-plan");
+
+    await expect(
+      Test.run(
+        scratch.plan(
+          defineCloudflareFoundation(
+            pagesInput,
+            Redacted.make("test-only-runtime-token-value"),
+            () => Effect.succeed(validDeploymentInput.dnsZoneIds.application),
+          ),
+        ),
+        options,
+      ),
+    ).rejects.toThrow(
+      "the cloudflare-pages content origin is not implemented by this stack yet",
+    );
+  });
+
   it("binds hosted WorkOS settings only as one complete deployment contract", async () => {
     const hostedInput = {
       ...validDeploymentInput,

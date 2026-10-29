@@ -56,11 +56,13 @@ const validatePublicDnsZone = Effect.fn("validatePublicDnsZone")(
         hostname: input.applicationDomain,
         zone: undefined,
       }).pipe(Effect.orDie),
-      resolveZoneId({
-        accountId,
-        hostname: input.contentDomain,
-        zone: undefined,
-      }).pipe(Effect.orDie),
+      input.contentOrigin?.kind === "cloudflare-pages"
+        ? Effect.succeed(undefined)
+        : resolveZoneId({
+          accountId,
+          hostname: input.contentDomain,
+          zone: undefined,
+        }).pipe(Effect.orDie),
     ]);
     if (applicationZoneId !== configuredZoneIds.application) {
       yield* Effect.die(
@@ -68,6 +70,15 @@ const validatePublicDnsZone = Effect.fn("validatePublicDnsZone")(
           "dnsZoneIds.application does not match the application domain zone inferred by Cloudflare",
         ),
       );
+    }
+    if (contentZoneId === undefined) {
+      return;
+    }
+    if (configuredZoneIds.content === undefined) {
+      yield* Effect.die(
+        new Error("public ingress requires a content DNS zone"),
+      );
+      return;
     }
     if (contentZoneId !== configuredZoneIds.content) {
       yield* Effect.die(
@@ -81,9 +92,19 @@ const validatePublicDnsZone = Effect.fn("validatePublicDnsZone")(
 
 const requireContentDnsZoneId = (
   input: CloudflareDeploymentInput,
-): Effect.Effect<string> => input.dnsZoneIds === undefined
-  ? Effect.die(new Error("public ingress requires a content DNS zone"))
-  : Effect.succeed(input.dnsZoneIds.content);
+): Effect.Effect<string> => {
+  if (input.contentOrigin?.kind === "cloudflare-pages") {
+    return Effect.die(
+      new Error(
+        "the cloudflare-pages content origin is not implemented by this stack yet",
+      ),
+    );
+  }
+  const contentZoneId = input.dnsZoneIds?.content;
+  return contentZoneId === undefined
+    ? Effect.die(new Error("public ingress requires a content DNS zone"))
+    : Effect.succeed(contentZoneId);
+};
 
 const defineDurableResources = Effect.fn("defineDurableResources")(
   function* (manifest: CloudflareDeploymentManifest) {
