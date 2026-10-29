@@ -50,6 +50,34 @@ Alchemy has a transitive peer warning. `capnp-es@0.0.14` requests TypeScript
 `^5.7.3`, but this repository uses TypeScript `7.0.2`. The package checks pass
 with the repository version.
 
+## GitHub Actions prerequisite check
+
+For the `CoolDarran/artifact-server` installation, configure these repository
+settings under **Settings → Secrets and variables → Actions**:
+
+| Kind | Name | Value |
+| --- | --- | --- |
+| Secret | `CLOUDFLARE_API_TOKEN` | Cloudflare API token with access to the installation account |
+| Secret | `ARTIFACT_SERVER_API_TOKEN` | Stable generated application API token, at least 32 characters |
+| Variable | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID, not a zone ID |
+| Variable | `ALCHEMY_STAGE` | `production` |
+
+Once `.github/workflows/cloudflare-preflight.yml` is on the default branch,
+open **Actions → Cloudflare deployment preflight → Run workflow**. The workflow
+checks the four settings, reads the Worker, D1, R2, and Pages inventories, and
+checks that `danran.one` is active in the configured account. Results appear in
+the run summary. No resources are created or modified. A passing run proves
+configuration presence and read access; it does not prove write permissions,
+browser login, or a working deployment.
+
+The single-domain installation direction uses `artifacts.danran.one` for the
+application and Pages for content ingress. That adapter is not implemented;
+see [decision 0029](../../project/spec/decisions/0029-pages-content-ingress-and-bounded-retention.md).
+The existing Alchemy entrypoint below still requires two owned DNS zones.
+Do not supply a fabricated zone ID for `pages.dev` or run that entrypoint as
+though it supported the Pages direction. A production deployment workflow
+must wait for the adapter, browser authentication, and application qualification.
+
 ## Install the package
 
 Run this command from `deploy/cloudflare`:

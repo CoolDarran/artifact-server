@@ -61,15 +61,15 @@ but every package must expose these names and meanings.
 | `region` | yes | One provider region supported by the selected package |
 | `imageReference` | yes for AWS/GCP | OCI image reference pinned by digest, never a floating tag |
 | `applicationDomain` | yes | Exact application host, such as `artifacts.example.com` |
-| `contentDomain` | yes | Separate registrable content domain used for version hosts, such as `artifact-content.example.net` |
-| `bootstrapAdministratorEmail` | yes | Existing administrator email; not a public sign-up address |
+| `contentDomain` | yes | Separate registrable content domain used for version hosts, such as `artifact-content.example.net` || `bootstrapAdministratorEmail` | yes | Existing administrator email; not a public sign-up address |
 | `ingress` | yes | `public` or `private` |
 | `capacity` | yes | Object with `minimumInstances`, `maximumInstances`, `cpu`, and `memoryMiB`; minimum is at least 1 in production |
 | `databasePlan` | yes | `small`, `standard`, or `high-availability`; provider mapping is pinned in that package |
 | `backupRetentionDays` | yes | Integer from 7 through 35; production minimum is 14 |
 | `deletionProtection` | yes | Must be `true` in production; a separate deliberate recovery procedure is required to disable it |
 | `existingNetwork` | no | Provider-specific existing network and subnet identifiers; if absent, the package creates its documented network |
-| `dnsZoneIds` | public only | Existing authoritative zone IDs for `application` and `content`; the IDs must differ because the domains have separate registrable boundaries |
+| `dnsZoneIds` | public only | Existing authoritative zone IDs for `application` and `content`; the IDs must differ because the domains have separate registrable boundaries. A Cloudflare `cloudflare-pages` content origin supplies only `application`, because that origin needs no content zone |
+| `contentOrigin` | no, Cloudflare only | `{"kind": "wildcard-dns"}` for the default wildcard DNS route, or `{"kind": "cloudflare-pages", "projectName": "..."}` for provider-named content origins. The Pages origin requires `contentDomain` to be exactly `<projectName>.pages.dev` and rejects a content DNS zone |
 | `workosClientId` | hosted login only | Non-secret WorkOS client identifier for this environment |
 | `workosIssuer` | hosted login only | Exact HTTPS AuthKit issuer for this environment |
 | `workosApiKeySecretRef` | hosted login only | Provider secret-manager reference, never the key value |
