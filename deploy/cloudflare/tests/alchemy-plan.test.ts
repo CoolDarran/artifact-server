@@ -59,7 +59,15 @@ const workerProvider = Provider.succeed(
     delete: writeForbidden,
   },
 );
+const pagesProjectProvider = Provider.succeed(
+  Cloudflare.Pages.Project,
+  {
+    reconcile: writeForbidden,
+    delete: writeForbidden,
+  },
+);
 const individualProviders = Layer.mergeAll(
+  pagesProjectProvider,
   databaseProvider,
   bucketProvider,
   dnsRecordProvider,
@@ -229,7 +237,7 @@ describe("Alchemy foundation plan", () => {
     );
   });
 
-  it("refuses a Pages content origin before it can create a wildcard route", async () => {
+  it("plans a retained Pages gateway with one owned DNS zone and no wildcard route", async () => {
     const pagesInput = {
       ...validDeploymentInput,
       contentDomain: "artifact-server-content.pages.dev",
@@ -243,20 +251,35 @@ describe("Alchemy foundation plan", () => {
     };
     const scratch = Test.scratchStack(options, "pages-origin-plan");
 
-    await expect(
-      Test.run(
-        scratch.plan(
-          defineCloudflareFoundation(
-            pagesInput,
-            Redacted.make("test-only-runtime-token-value"),
-            () => Effect.succeed(validDeploymentInput.dnsZoneIds.application),
-          ),
+    const resolvedHostnames: string[] = [];
+    const plan = await Test.run(
+      scratch.plan(
+        defineCloudflareFoundation(
+          pagesInput,
+          Redacted.make("test-only-runtime-token-value"),
+          ({hostname}) => {
+            resolvedHostnames.push(hostname);
+            return Effect.succeed(validDeploymentInput.dnsZoneIds.application);
+          },
         ),
-        options,
       ),
-    ).rejects.toThrow(
-      "the cloudflare-pages content origin is not implemented by this stack yet",
+      options,
     );
+    const resources = Object.values(plan.resources);
+    expect(resources.map(({resource}) => resource.Type).toSorted((left, right) => left.localeCompare(right))).toEqual([
+      "Cloudflare.D1Database",
+      "Cloudflare.Pages.Project",
+      "Cloudflare.R2.Bucket",
+      "Cloudflare.Worker",
+    ]);
+    expect(resolvedHostnames).toEqual([pagesInput.applicationDomain]);
+    const pages = resources.find(({resource}) => resource.Type === "Cloudflare.Pages.Project");
+    expect(pages?.resource.Props).toEqual({name: "artifact-server-content", productionBranch: "main"});
+    expect(pages?.resource.RemovalPolicy).toBe("retain");
+    expect(pages?.resource.Adopt).toBe(true);
+    const application = resources.find(({resource}) => resource.Type === "Cloudflare.Worker");
+    expect(application?.resource.Props).not.toHaveProperty("routes");
+    expect(Object.values(plan.actions)).toHaveLength(1);
   });
 
   it("binds hosted WorkOS settings only as one complete deployment contract", async () => {

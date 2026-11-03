@@ -21,6 +21,7 @@ import {
 import {createD1ArtifactRepository} from "./d1-artifact-repository.js";
 import {createD1IdentityRepository} from "./d1-identity-repository.js";
 import {migrateD1, requiredD1SchemaVersion} from "./d1-migrations.js";
+import {createPagesContentIngress} from "./pages-content-ingress.js";
 import {createR2ObjectStorageAdapters} from "./r2-object-storage.js";
 import {
   ArtifactsBindingGitHistoryProvider,
@@ -62,6 +63,9 @@ export interface WorkerEnvironment {
   readonly ARTIFACT_SERVER_OIDC_ISSUER?: string;
   readonly ARTIFACT_SERVER_OIDC_SCOPES?: string;
   readonly ARTIFACT_SERVER_ORIGIN: string;
+  readonly ARTIFACT_SERVER_PAGES_ACCOUNT_ID?: string;
+  readonly ARTIFACT_SERVER_PAGES_PROJECT_NAME?: string;
+  readonly ARTIFACT_SERVER_PAGES_API_TOKEN?: string;
   readonly ARTIFACT_SERVER_QUALIFICATION_MODE?: "enabled";
   readonly ARTIFACT_SERVER_R2_BUCKET: R2Bucket;
   readonly ARTIFACT_SERVER_REQUEST_LOG_SAMPLE_RATE?: string | number;
@@ -189,6 +193,13 @@ async function createCloudflareRuntime(
     repository,
     staging,
   };
+  if (environment.ARTIFACT_SERVER_PAGES_PROJECT_NAME !== undefined) {
+    Object.assign(applicationAdapters, {contentIngress: createPagesContentIngress({
+      accountId: requireEnvironmentValue(environment.ARTIFACT_SERVER_PAGES_ACCOUNT_ID),
+      apiToken: Redacted.make(requireEnvironmentValue(environment.ARTIFACT_SERVER_PAGES_API_TOKEN)),
+      projectName: environment.ARTIFACT_SERVER_PAGES_PROJECT_NAME,
+    })});
+  }
   if (gitHistory.provider !== null) {
     Object.assign(applicationAdapters, {gitHistoryProvider: gitHistory.provider});
   }
@@ -453,6 +464,15 @@ function validateEnvironment(environment: WorkerEnvironment): void {
   }
   if (environment.ARTIFACT_SERVER_CONTENT_DOMAIN.trim() === "") {
     throw new Error("ARTIFACT_SERVER_CONTENT_DOMAIN is required.");
+  }
+  const pages = [environment.ARTIFACT_SERVER_PAGES_ACCOUNT_ID, environment.ARTIFACT_SERVER_PAGES_PROJECT_NAME, environment.ARTIFACT_SERVER_PAGES_API_TOKEN];
+  if (pages.some(value => value !== undefined)) {
+    if (pages.some(value => value === undefined)
+      || environment.ARTIFACT_SERVER_CONTENT_DOMAIN !== `${environment.ARTIFACT_SERVER_PAGES_PROJECT_NAME}.pages.dev`) {
+      throw new Error("Pages content requires a complete, matching installation configuration.");
+    }
+  } else if (environment.ARTIFACT_SERVER_CONTENT_DOMAIN.endsWith(".pages.dev")) {
+    throw new Error("A Pages content domain requires its content ingress provider.");
   }
   if (
     workOsValues(environment).some((value) => value !== undefined) &&

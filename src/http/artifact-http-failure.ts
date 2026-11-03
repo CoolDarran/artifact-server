@@ -103,6 +103,8 @@ export function artifactServerFailureResponse(failure: ArtifactServerFailure) {
         message: failure.message,
         status: 501,
       };
+    case "ContentIngressUnavailable":
+      return {code: "CONTENT_INGRESS_UNAVAILABLE" as const, message: failure.message, status: 503};
     case "ArtifactRepositoryFailure":
     case "IdentityRepositoryFailure":
     case "BlobStorageFailure":

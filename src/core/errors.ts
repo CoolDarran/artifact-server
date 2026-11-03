@@ -451,6 +451,12 @@ export class IdentityRepositoryFailure extends Schema.TaggedError<IdentityReposi
   },
 ) {}
 
+/** A content hostname could not become available within its publication budget. */
+export class ContentIngressUnavailable extends Schema.TaggedError<ContentIngressUnavailable>()(
+  "ContentIngressUnavailable",
+  {message: Schema.String},
+) {}
+
 /** An outbound immutable-blob operation failed unexpectedly. */
 export class BlobStorageFailure extends Schema.TaggedError<BlobStorageFailure>()(
   "BlobStorageFailure",
@@ -523,6 +529,7 @@ const artifactServerFailureSchema = Schema.Union([
   IdentityRepositoryFailure,
   BlobStorageFailure,
   StagingStorageFailure,
+  ContentIngressUnavailable,
 ]);
 
 /** Every expected product or outbound-adapter failure handled by an entry point. */

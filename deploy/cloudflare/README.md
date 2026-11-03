@@ -9,7 +9,8 @@ The stack defines these resources:
 - one D1 database
 - one private R2 bucket
 - one application custom domain for public ingress
-- one proxied wildcard DNS record and Worker route for version content
+- either one proxied wildcard DNS record and Worker route for version content,
+  or one retained Direct Upload Pages project with a service-bound gateway
 - one account-level Cloudflare state-store dependency
 
 The Worker runs the same HTTP, MCP, publishing, project, artifact, version,
@@ -64,6 +65,7 @@ settings under **Settings → Secrets and variables → Actions**:
 | Variable | `ARTIFACT_SERVER_OIDC_CLIENT_ID` | Cloudflare Access OIDC client ID |
 | Variable | `ARTIFACT_SERVER_OIDC_ISSUER` | Exact `issuer` from the client's discovery document |
 | Secret | `ARTIFACT_SERVER_OIDC_CLIENT_SECRET` | Cloudflare Access OIDC client secret |
+| Variable | `ARTIFACT_SERVER_BOOTSTRAP_ADMINISTRATOR_EMAIL` | Exact email of the first installation administrator |
 
 Once `.github/workflows/cloudflare-preflight.yml` is on the default branch,
 open **Actions → Cloudflare deployment preflight → Run workflow**. The workflow
@@ -76,13 +78,31 @@ proves configuration presence, read access, and the public OIDC metadata. It
 does not prove write permissions, client-secret correctness, the Access policy,
 a browser login round trip, or a working deployment.
 
-The single-domain installation direction uses `artifacts.danran.one` for the
-application and Pages for content ingress. That adapter is not implemented;
-see [decision 0029](../../project/spec/decisions/0029-pages-content-ingress-and-bounded-retention.md).
-The existing Alchemy entrypoint below still requires two owned DNS zones.
-Do not supply a fabricated zone ID for `pages.dev` or run that entrypoint as
-though it supported the Pages direction. A production deployment workflow
-must wait for the adapter, browser authentication, and application qualification.
+The single-domain installation uses `artifacts.danran.one` for the application
+and a Direct Upload Pages project for content ingress; see
+[decision 0029](../../project/spec/decisions/0029-pages-content-ingress-and-bounded-retention.md).
+With `contentOrigin.kind: "cloudflare-pages"`, the Alchemy stack adopts or
+creates the configured Pages project, retains it on stack removal, binds its
+preview and production environments to the application Worker, and uploads a
+small gateway. Only the application domain needs an owned DNS zone. The gateway
+rejects the project root and deployment hash hostnames; version and Review
+hostnames retain central application authorization and response policy.
+
+The `operation` input defaults to `check`, which creates no resources. Select
+`qualify` to deploy the isolated `probe-artifacts.danran.one` installation and
+`as-pages-runtime-probe` project through the canonical Alchemy stack. The live
+check publishes through staged upload, verifies exact version bytes and retry
+identity, makes the artifact private, exchanges a content session, and opens a
+Review lease. A successful run saves qualification evidence for two days.
+
+Select `deploy` only after successful qualification of the exact same commit.
+The workflow enforces that requirement before deploying `artifacts.danran.one`
+and adopting `danran-artifact-content`. Both operations require the bootstrap
+administrator email above. The account state Worker may be initialized by
+Alchemy's `--yes` path; durable D1, R2, and Pages resources are retained.
+Live browser login and Review iframe behavior remain separate acceptance gates.
+The custom DNS content configuration below continues to require two owned DNS
+zones; never supply a fabricated zone ID for `pages.dev`.
 
 ## Install the package
 
