@@ -272,7 +272,7 @@ jobs:
           ARTIFACT_SERVER_OIDC_CLIENT_SECRET: ${{ secrets.ARTIFACT_SERVER_OIDC_CLIENT_SECRET }}
           ALCHEMY_TELEMETRY_DISABLED: "1"
           DO_NOT_TRACK: "1"
-        run: pnpm --dir deploy/cloudflare deploy --yes --stage "$ALCHEMY_STAGE"
+        run: pnpm --dir deploy/cloudflare run deploy --yes --stage "$ALCHEMY_STAGE"
       - name: Check live Pages publication and authorization
         if: inputs.operation == 'qualify'
         env:
