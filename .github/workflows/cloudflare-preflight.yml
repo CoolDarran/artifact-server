@@ -220,6 +220,9 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Build application
         run: pnpm build
+      - name: Install live browser qualification runtime
+        if: inputs.operation == 'qualify'
+        run: pnpm exec playwright install --with-deps chromium
       - name: Prepare installation configuration
         env:
           OPERATION: ${{ inputs.operation }}
@@ -256,11 +259,9 @@ jobs:
             ingress: 'public', installationName: production ? 'danran-artifacts' : 'pages',
             region: 'global', stage: production ? 'production' : 'probe-runtime-pages',
             stateStore: 'cloudflare', target: 'cloudflare',
-            ...(production ? {
-              oidcClientId: process.env.OIDC_CLIENT_ID,
-              oidcClientSecretRef: 'cloudflare-secrets-store://artifact-server-oidc-client-secret',
-              oidcIssuer: process.env.OIDC_ISSUER, oidcScopes: 'openid email profile',
-            } : {}),
+            oidcClientId: process.env.OIDC_CLIENT_ID,
+            oidcClientSecretRef: 'cloudflare-secrets-store://artifact-server-oidc-client-secret',
+            oidcIssuer: process.env.OIDC_ISSUER, oidcScopes: 'openid email profile',
           };
           await appendFile(process.env.GITHUB_ENV, `ARTIFACT_SERVER_CLOUDFLARE_CONFIG=${JSON.stringify(configuration)}\nALCHEMY_STAGE=${configuration.stage}\nARTIFACT_SERVER_APPLICATION_ORIGIN=https://${configuration.applicationDomain}\n`);
           NODE
