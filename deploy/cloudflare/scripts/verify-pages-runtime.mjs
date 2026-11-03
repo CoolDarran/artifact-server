@@ -52,6 +52,15 @@ async function requestContent(path, options = {}) {
 }
 
 async function expectStatus(response, expected, label) {
+  if (response.status !== expected && (label === "/health" || label === "/ready")) {
+    const body = await response.clone().text();
+    console.error("Public readiness diagnostic:", JSON.stringify({
+      path: label, status: response.status, server: response.headers.get("server"),
+      ray: response.headers.get("cf-ray"), mitigated: response.headers.get("cf-mitigated"),
+      errorCode: /error code: *([0-9]+)/iu.exec(body)?.[1] ?? null,
+      title: /<title>([^<]{0,160})<\/title>/iu.exec(body)?.[1] ?? null,
+    }));
+  }
   assert.equal(response.status, expected, `${label}: unexpected HTTP status`);
   await response.body?.cancel();
   console.log(`${label}: PASS`);
