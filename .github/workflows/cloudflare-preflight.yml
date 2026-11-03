@@ -276,6 +276,7 @@ jobs:
         run: pnpm --dir deploy/cloudflare run deploy --yes --stage "$ALCHEMY_STAGE"
       - name: Check live Pages publication and authorization
         if: inputs.operation == 'qualify'
+        shell: bash
         env:
           ARTIFACT_SERVER_API_TOKEN: ${{ secrets.ARTIFACT_SERVER_API_TOKEN }}
         run: node deploy/cloudflare/scripts/verify-pages-runtime.mjs | tee "$RUNNER_TEMP/pages-runtime-qualification.txt"
