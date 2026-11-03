@@ -30,6 +30,9 @@ jobs:
           ARTIFACT_SERVER_API_TOKEN: ${{ secrets.ARTIFACT_SERVER_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           ALCHEMY_STAGE: ${{ vars.ALCHEMY_STAGE }}
+          ARTIFACT_SERVER_OIDC_CLIENT_ID: ${{ vars.ARTIFACT_SERVER_OIDC_CLIENT_ID }}
+          ARTIFACT_SERVER_OIDC_ISSUER: ${{ vars.ARTIFACT_SERVER_OIDC_ISSUER }}
+          ARTIFACT_SERVER_OIDC_CLIENT_SECRET: ${{ secrets.ARTIFACT_SERVER_OIDC_CLIENT_SECRET }}
         shell: bash
         run: |
           node --input-type=module <<'NODE'
@@ -40,6 +43,9 @@ jobs:
             'ARTIFACT_SERVER_API_TOKEN',
             'CLOUDFLARE_ACCOUNT_ID',
             'ALCHEMY_STAGE',
+            'ARTIFACT_SERVER_OIDC_CLIENT_ID',
+            'ARTIFACT_SERVER_OIDC_ISSUER',
+            'ARTIFACT_SERVER_OIDC_CLIENT_SECRET',
           ];
           const missing = required.filter((name) => !process.env[name]?.trim());
           if (missing.length > 0) {
@@ -57,6 +63,14 @@ jobs:
           }
           if (process.env.ARTIFACT_SERVER_API_TOKEN.trim().length < 32) {
             console.error('ARTIFACT_SERVER_API_TOKEN must contain at least 32 characters.');
+            process.exit(1);
+          }
+
+          const clientId = process.env.ARTIFACT_SERVER_OIDC_CLIENT_ID;
+          const issuer = process.env.ARTIFACT_SERVER_OIDC_ISSUER;
+          if (!/^[a-f0-9]{64}$/.test(clientId)
+            || issuer !== `https://danran.cloudflareaccess.com/cdn-cgi/access/sso/oidc/${clientId}`) {
+            console.error('OIDC settings must identify this installation’s Cloudflare Access client.');
             process.exit(1);
           }
 
@@ -94,10 +108,46 @@ jobs:
               console.error(`${name}: request did not complete.`);
             }
           }
+          try {
+            const discoveryResponse = await fetch(`${issuer}/.well-known/openid-configuration`, {
+              redirect: 'error',
+              signal: AbortSignal.timeout(15000),
+            });
+            const discovery = await discoveryResponse.json();
+            const discoveryPassed = discoveryResponse.ok && discovery.issuer === issuer
+              && discovery.authorization_endpoint === `${issuer}/authorization`
+              && discovery.token_endpoint === `${issuer}/token`
+              && discovery.jwks_uri === `${issuer}/jwks`
+              && ['openid', 'email', 'profile'].every(
+                (scope) => discovery.scopes_supported?.includes(scope),
+              )
+              && discovery.grant_types_supported?.includes('authorization_code_with_pkce')
+              && discovery.response_types_supported?.includes('code')
+              && discovery.id_token_signing_alg_values_supported?.includes('RS256');
+            if (!discoveryPassed) throw new Error('Discovery does not match the configured client.');
+            const keysResponse = await fetch(discovery.jwks_uri, {
+              redirect: 'error',
+              signal: AbortSignal.timeout(15000),
+            });
+            const keys = await keysResponse.json();
+            const passed = keysResponse.ok && Array.isArray(keys.keys) && keys.keys.some(
+              (key) => key.kty === 'RSA' && typeof key.kid === 'string' && key.kid.length > 0
+                && typeof key.n === 'string' && key.n.length > 0
+                && typeof key.e === 'string' && key.e.length > 0,
+            );
+            failed ||= !passed;
+            const status = passed ? 'PASS' : 'FAIL';
+            rows.push(`| Cloudflare Access discovery and signing keys | ${status} |`);
+            console.log(`Cloudflare Access discovery and signing keys: ${status}`);
+          } catch {
+            failed = true;
+            rows.push('| Cloudflare Access discovery and signing keys | FAIL |');
+            console.error('Cloudflare Access discovery or signing-key check failed.');
+          }
           const summary = [
             '## Cloudflare deployment preflight',
             '',
-            'The four required GitHub settings are present and structurally valid.',
+            'The seven required GitHub settings are present and structurally valid.',
             '',
             '| Check | Result |',
             '| --- | --- |',
@@ -106,9 +156,11 @@ jobs:
             'These GET requests verify read access only. They do not prove create/update permissions.',
             'This workflow creates no resources and does not deploy Artifact Server.',
             '',
-            'Deployment remains pending: the Pages content gateway must be integrated with the real application,',
-            'browser login must be configured, and the application qualification checks must pass.',
-            'The existing Alchemy entrypoint requires two owned DNS zones; do not use it with a pages.dev zone ID.',
+            'OIDC discovery and public signing keys are checked without sending the client secret.',
+            'Secret presence does not prove its correctness, the Access policy, or a browser login round trip.',
+            'Deployment remains pending: the Pages content gateway must be integrated with the real application',
+            'and the application qualification checks must pass.',
+            'The existing stack cannot yet deploy a Pages origin; do not use a pages.dev zone ID.',
             '',
           ].join('\n');
           await appendFile(process.env.GITHUB_STEP_SUMMARY, summary);

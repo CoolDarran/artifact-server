@@ -61,14 +61,20 @@ settings under **Settings → Secrets and variables → Actions**:
 | Secret | `ARTIFACT_SERVER_API_TOKEN` | Stable generated application API token, at least 32 characters |
 | Variable | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID, not a zone ID |
 | Variable | `ALCHEMY_STAGE` | `production` |
+| Variable | `ARTIFACT_SERVER_OIDC_CLIENT_ID` | Cloudflare Access OIDC client ID |
+| Variable | `ARTIFACT_SERVER_OIDC_ISSUER` | Exact `issuer` from the client's discovery document |
+| Secret | `ARTIFACT_SERVER_OIDC_CLIENT_SECRET` | Cloudflare Access OIDC client secret |
 
 Once `.github/workflows/cloudflare-preflight.yml` is on the default branch,
 open **Actions → Cloudflare deployment preflight → Run workflow**. The workflow
-checks the four settings, reads the Worker, D1, R2, and Pages inventories, and
-checks that `danran.one` is active in the configured account. Results appear in
-the run summary. No resources are created or modified. A passing run proves
-configuration presence and read access; it does not prove write permissions,
-browser login, or a working deployment.
+checks the seven settings, reads the Worker, D1, R2, and Pages inventories, and
+checks that `danran.one` is active in the configured account. It also verifies
+Cloudflare Access discovery and public signing keys for the configured client
+under `danran.cloudflareaccess.com`, without sending the client secret. Results
+appear in the run summary. No resources are created or modified. A passing run
+proves configuration presence, read access, and the public OIDC metadata. It
+does not prove write permissions, client-secret correctness, the Access policy,
+a browser login round trip, or a working deployment.
 
 The single-domain installation direction uses `artifacts.danran.one` for the
 application and Pages for content ingress. That adapter is not implemented;
