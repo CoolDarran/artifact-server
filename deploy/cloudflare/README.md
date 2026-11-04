@@ -9,7 +9,8 @@ The stack defines these resources:
 - one D1 database
 - one private R2 bucket
 - one application custom domain for public ingress
-- one proxied wildcard DNS record and Worker route for version content
+- either one proxied wildcard DNS record and Worker route for version content,
+  or one retained Direct Upload Pages project with a service-bound gateway
 - one account-level Cloudflare state-store dependency
 
 The Worker runs the same HTTP, MCP, publishing, project, artifact, version,
@@ -49,6 +50,80 @@ proves configuration only; it does not replace the live client-flow gate.
 Alchemy has a transitive peer warning. `capnp-es@0.0.14` requests TypeScript
 `^5.7.3`, but this repository uses TypeScript `7.0.2`. The package checks pass
 with the repository version.
+
+## GitHub Actions prerequisite check
+
+For the `CoolDarran/artifact-server` installation, configure these repository
+settings under **Settings → Secrets and variables → Actions**:
+
+| Kind | Name | Value |
+| --- | --- | --- |
+| Secret | `CLOUDFLARE_API_TOKEN` | Cloudflare API token with access to the installation account |
+| Secret | `ARTIFACT_SERVER_API_TOKEN` | Stable generated application API token, at least 32 characters |
+| Variable | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID, not a zone ID |
+| Variable | `ALCHEMY_STAGE` | `production` |
+| Variable | `ARTIFACT_SERVER_OIDC_CLIENT_ID` | Cloudflare Access OIDC client ID |
+| Variable | `ARTIFACT_SERVER_OIDC_ISSUER` | Exact `issuer` from the client's discovery document |
+| Secret | `ARTIFACT_SERVER_OIDC_CLIENT_SECRET` | Cloudflare Access OIDC client secret |
+| Variable | `ARTIFACT_SERVER_BOOTSTRAP_ADMINISTRATOR_EMAIL` | Exact email of the first installation administrator |
+
+Once `.github/workflows/cloudflare-preflight.yml` is on the default branch,
+open **Actions → Cloudflare deployment preflight → Run workflow**. The workflow
+checks the seven settings, reads the Worker, D1, R2, and Pages inventories, and
+checks that `danran.one` is active in the configured account. It also verifies
+Cloudflare Access discovery and public signing keys for the configured client
+under `danran.cloudflareaccess.com`, without sending the client secret. Results
+appear in the run summary. No resources are created or modified. A passing run
+proves configuration presence, read access, and the public OIDC metadata. It
+does not prove write permissions, client-secret correctness, the Access policy,
+a browser login round trip, or a working deployment.
+
+The single-domain installation uses `artifacts.danran.one` for the application
+and a Direct Upload Pages project for content ingress; see
+[decision 0029](../../project/spec/decisions/0029-pages-content-ingress-and-bounded-retention.md).
+With `contentOrigin.kind: "cloudflare-pages"`, the Alchemy stack adopts or
+creates the configured Pages project, retains it on stack removal, binds its
+preview and production environments to the application Worker, and uploads a
+small gateway. Only the application domain needs an owned DNS zone. The gateway
+rejects the project root and deployment hash hostnames; version and Review
+hostnames retain central application authorization and response policy.
+
+The `operation` input defaults to `check`, which creates no resources. Select
+`qualify` to deploy the isolated `probe-artifacts.danran.one` installation and
+`as-pages-runtime-probe` project through the canonical Alchemy stack. The live
+check publishes through staged upload, verifies exact version bytes and retry
+identity, makes the artifact private, exchanges a content session, and opens a
+Review lease. A successful run saves qualification evidence for two days.
+
+The installation token also needs zone-scoped **WAF Edit** permission for
+`danran.one` when running `qualify` or a production deployment with external
+verification enabled. That path manages one custom skip rule per installation,
+scoped to the exact application hostname and its HTTP APIs, readiness, login
+redirect, Review frame, and static assets. It skips Browser Integrity Check and
+Security Level challenges for those paths so unattended HTTP and MCP clients
+can reach application authentication. Other zone rules remain independently
+owned; the workflow creates or patches its own rule and verifies that existing
+rules retain their actions and expressions. Managed WAF rules and application
+authorization continue to apply.
+
+By default, select `deploy` only after successful qualification of the exact
+same commit. The workflow enforces that requirement before deploying
+`artifacts.danran.one` and adopting `danran-artifact-content`. If the operator
+explicitly accepts deployment before external acceptance, select
+`defer_external_verification: true`. That production run skips the qualification
+requirement, the browser-check exception change, and the public HTTP acceptance
+checks. Its summary records the actor and commit and labels the deployment as
+unverified. It does not create qualification evidence or change zone-wide Bot
+Fight Mode. A successful stack apply confirms resource deployment, not browser
+login, publication, content access, or MCP availability.
+
+Both operations require the bootstrap administrator email above. The account
+state Worker may be initialized by Alchemy's `--yes` path; durable D1, R2, and
+Pages resources are retained. Production uses its own Worker, database, bucket,
+and Pages project; it does not promote or replace the isolated probe's data.
+Live browser login and Review iframe behavior remain separate acceptance gates.
+The custom DNS content configuration below continues to require two owned DNS
+zones; never supply a fabricated zone ID for `pages.dev`.
 
 ## Install the package
 

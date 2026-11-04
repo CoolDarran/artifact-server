@@ -10,6 +10,9 @@ import {
   type CloudflareDeploymentManifest,
 } from "./deployment-manifest.ts";
 
+import {pagesGatewayRevision} from "./pages-control-client.js";
+import {InstallPagesGateway} from "./pages-gateway-installation.js";
+
 const WORKER_ENTRYPOINT = new URL("./worker.ts", import.meta.url).pathname;
 const WEB_ASSET_DIRECTORY = new URL("../../../dist/web", import.meta.url).pathname;
 
@@ -56,11 +59,13 @@ const validatePublicDnsZone = Effect.fn("validatePublicDnsZone")(
         hostname: input.applicationDomain,
         zone: undefined,
       }).pipe(Effect.orDie),
-      resolveZoneId({
-        accountId,
-        hostname: input.contentDomain,
-        zone: undefined,
-      }).pipe(Effect.orDie),
+      input.contentOrigin?.kind === "cloudflare-pages"
+        ? Effect.succeed(undefined)
+        : resolveZoneId({
+          accountId,
+          hostname: input.contentDomain,
+          zone: undefined,
+        }).pipe(Effect.orDie),
     ]);
     if (applicationZoneId !== configuredZoneIds.application) {
       yield* Effect.die(
@@ -68,6 +73,15 @@ const validatePublicDnsZone = Effect.fn("validatePublicDnsZone")(
           "dnsZoneIds.application does not match the application domain zone inferred by Cloudflare",
         ),
       );
+    }
+    if (contentZoneId === undefined) {
+      return;
+    }
+    if (configuredZoneIds.content === undefined) {
+      yield* Effect.die(
+        new Error("public ingress requires a content DNS zone"),
+      );
+      return;
     }
     if (contentZoneId !== configuredZoneIds.content) {
       yield* Effect.die(
@@ -81,9 +95,12 @@ const validatePublicDnsZone = Effect.fn("validatePublicDnsZone")(
 
 const requireContentDnsZoneId = (
   input: CloudflareDeploymentInput,
-): Effect.Effect<string> => input.dnsZoneIds === undefined
-  ? Effect.die(new Error("public ingress requires a content DNS zone"))
-  : Effect.succeed(input.dnsZoneIds.content);
+): Effect.Effect<string> => {
+  const contentZoneId = input.dnsZoneIds?.content;
+  return contentZoneId === undefined
+    ? Effect.die(new Error("public ingress requires a content DNS zone"))
+    : Effect.succeed(contentZoneId);
+};
 
 const defineDurableResources = Effect.fn("defineDurableResources")(
   function* (manifest: CloudflareDeploymentManifest) {
@@ -140,6 +157,7 @@ export const defineCloudflareFoundation = Effect.fn(
     });
 
   const contentWildcardDns = input.ingress === "public"
+    && input.contentOrigin?.kind !== "cloudflare-pages"
     ? yield* Cloudflare.DNS.Record("ContentWildcardDns", {
       comment: "Artifact Server version content",
       content: "100::",
@@ -164,6 +182,17 @@ export const defineCloudflareFoundation = Effect.fn(
     workerEnvironment = {
       ...workerEnvironment,
       ARTIFACT_SERVER_QUALIFICATION_MODE: "enabled",
+    };
+  }
+  if (input.contentOrigin?.kind === "cloudflare-pages") {
+    if (credentials.type === "apiKey") {
+      return yield* Effect.die(new Error("Pages content requires a scoped Cloudflare API token."));
+    }
+    workerEnvironment = {
+      ...workerEnvironment,
+      ARTIFACT_SERVER_PAGES_ACCOUNT_ID: input.cloudflareAccountId,
+      ARTIFACT_SERVER_PAGES_PROJECT_NAME: input.contentOrigin.projectName,
+      ARTIFACT_SERVER_PAGES_API_TOKEN: credentials.type === "apiToken" ? credentials.apiToken : credentials.accessToken,
     };
   }
   if (artifacts !== undefined) {
@@ -246,19 +275,42 @@ export const defineCloudflareFoundation = Effect.fn(
     tags: [...manifest.workerTags],
   };
   if (input.ingress === "public") {
-    const contentZoneId = yield* requireContentDnsZoneId(input);
     workerProps.domain = {
       name: input.applicationDomain,
     };
-    workerProps.routes = [{
-      pattern: manifest.routes.content,
-      zoneId: contentZoneId,
-    }];
+    if (input.contentOrigin?.kind !== "cloudflare-pages") {
+      const contentZoneId = yield* requireContentDnsZoneId(input);
+      workerProps.routes = [{
+        pattern: manifest.routes.content,
+        zoneId: contentZoneId,
+      }];
+    }
   }
   const worker = yield* Cloudflare.Worker(
     "Application",
     workerProps,
   );
+
+  const pagesProjectName = input.contentOrigin?.kind === "cloudflare-pages"
+    ? input.contentOrigin.projectName
+    : undefined;
+  const pagesGateway = pagesProjectName !== undefined
+    ? yield* Effect.gen(function* () {
+      const project = yield* Cloudflare.Pages.Project("ContentPages", {
+        name: pagesProjectName,
+        productionBranch: "main",
+      }).pipe(Alchemy.AdoptPolicy.adopt(true), Alchemy.RemovalPolicy.retain());
+      const installation = yield* InstallPagesGateway({
+        accountId: input.cloudflareAccountId,
+        applicationOrigin: manifest.applicationOrigin,
+        projectName: project.name,
+        workerName: worker.workerName,
+        compatibilityDate: input.compatibilityDate,
+        revision: pagesGatewayRevision(),
+      });
+      return {projectId: project.projectId, deploymentId: installation.deploymentId};
+    })
+    : undefined;
 
   const applicationUrl = manifest.applicationOrigin;
   const bundleDigest = Output.map(
@@ -285,12 +337,17 @@ export const defineCloudflareFoundation = Effect.fn(
     },
     networkResourceIds: input.dnsZoneIds === undefined
       ? {}
-      : {
-        applicationDnsZoneId: input.dnsZoneIds.application,
-        contentWildcardDnsRecordId:
-          contentWildcardDns?.recordId ?? "",
-        contentDnsZoneId: input.dnsZoneIds.content,
-      },
+      : pagesGateway === undefined
+        ? {
+          applicationDnsZoneId: input.dnsZoneIds.application,
+          contentWildcardDnsRecordId: contentWildcardDns?.recordId ?? "",
+          contentDnsZoneId: input.dnsZoneIds.content,
+        }
+        : {
+          applicationDnsZoneId: input.dnsZoneIds.application,
+          contentPagesProjectId: pagesGateway.projectId,
+          contentPagesGatewayDeploymentId: pagesGateway.deploymentId,
+        },
     logDestination: Output.interpolate`cloudflare-workers://${worker.workerName}`,
     stateBackend: "cloudflare:alchemy-state-store",
     supportManifestLocation,

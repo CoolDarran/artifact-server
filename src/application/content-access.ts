@@ -12,6 +12,7 @@ import {
   type AuthorizationDenied,
   ContentBootstrapRejected,
   ContentSessionRequired,
+  type ContentIngressUnavailable,
   VersionNotFound,
 } from "../core/errors.js";
 import type { Principal } from "../core/identity.js";
@@ -32,6 +33,7 @@ import {
   type AuthorizationOperations,
   AuthorizationService,
 } from "./authorization.js";
+import type {ContentIngress} from "./content-ingress.js";
 import type { ApplicationClock } from "./application-clock.js";
 import {
   type ProjectManagementFailure,
@@ -101,6 +103,7 @@ export type VersionContentFallback = "entry" | "none";
 
 /** Dependencies used to construct private and public content access. */
 export interface ContentAccessDependencies {
+  readonly contentIngress: ContentIngress;
   readonly clock: ApplicationClock;
   readonly repository: ContentAccessRepository;
   readonly secrets: ContentSecretProvider;
@@ -172,6 +175,7 @@ export type ContentAccessFailure =
   | AuthorizationDenied
   | ContentBootstrapRejected
   | ContentSessionRequired
+  | ContentIngressUnavailable
   | VersionNotFound
   | ArtifactRepositoryFailure
   | ProjectManagementFailure;
@@ -269,6 +273,7 @@ function makeContentAccessService(
     "ContentAccessService.issueContentBootstrap",
   )(function*(command: IssueContentBootstrapCommand) {
     const {artifact, project, target} = yield* resolveAuthorizedTarget(command);
+    yield* dependencies.contentIngress.ensureReady(target.contentToken);
 
     const now = yield* dependencies.clock.now;
     const secret = dependencies.secrets.issue();
@@ -302,7 +307,6 @@ function makeContentAccessService(
       projectId: command.projectId,
       target: {kind: "version", versionId: command.versionId},
     });
-    const now = yield* dependencies.clock.now;
     const issued = dependencies.secrets.issue();
     // A DNS label may contain at most 63 characters. The provider digest is
     // uniform lowercase hexadecimal, so 56 characters plus the `review-`
@@ -312,6 +316,8 @@ function makeContentAccessService(
       `${previewLeaseTokenPrefix}${issued.digest.slice(0, 56)}`,
       {label: "preview-lease-token"},
     );
+    yield* dependencies.contentIngress.ensureReady(Redacted.value(token));
+    const now = yield* dependencies.clock.now;
     const expiresAt = DateTime.formatIso(
       DateTime.addDuration(now, contentSessionLifetimeMilliseconds),
     );

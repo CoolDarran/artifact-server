@@ -7,6 +7,7 @@ import {
   type ArtifactRepositoryFailure,
   type AuthorizationDenied,
   type BlobStorageFailure,
+  type ContentIngressUnavailable,
   type IdempotencyConflict,
   InvalidArtifactName,
   type InvalidArtifactTags,
@@ -38,6 +39,7 @@ import {
   type AuthorizationOperations,
   AuthorizationService,
 } from "./authorization.js";
+import type {ContentIngress} from "./content-ingress.js";
 import type { ApplicationClock } from "./application-clock.js";
 import { parseIdempotencyKey } from "./idempotency-key.js";
 import { parseArtifactTags } from "./artifact-tags.js";
@@ -127,6 +129,7 @@ export interface PublishBlobStorage {
 /** Dependencies used to construct the publication application service. */
 export interface PublishArtifactDependencies {
   readonly blobs: PublishBlobStorage;
+  readonly contentIngress: ContentIngress;
   readonly clock: ApplicationClock;
   readonly ids: IdGenerator;
   readonly repository: PublishArtifactRepository;
@@ -144,6 +147,7 @@ export type PublishArtifactFailure =
   | PublishConflict
   | ProjectArchived
   | BlobStorageFailure
+  | ContentIngressUnavailable
   | StagingStorageFailure
   | AuthorizationDenied;
 
@@ -242,7 +246,10 @@ function makePublishArtifactService(
       idempotencyKey,
       inputDigest,
     );
-    if (replayed !== null) return replayed;
+    if (replayed !== null) {
+      yield* dependencies.contentIngress.ensureReady(replayed.version.contentToken);
+      return replayed;
+    }
 
     const sourceCheckTime = DateTime.formatIso(yield* dependencies.clock.now);
     yield* dependencies.repository.assertPublicationSourceReady(
@@ -252,12 +259,14 @@ function makePublishArtifactService(
     );
     yield* storeFiles(command.manifest, command.files);
 
+    const contentToken = dependencies.ids.contentToken();
+    yield* dependencies.contentIngress.ensureReady(contentToken);
     const createdAt = DateTime.formatIso(yield* dependencies.clock.now);
 
     return yield* dependencies.repository.commitNewArtifact({
       accessSetting: command.accessSetting,
       artifactId: dependencies.ids.artifactId(),
-      contentToken: dependencies.ids.contentToken(),
+      contentToken,
       createdAt,
       idempotencyKey,
       inputDigest,
@@ -302,7 +311,10 @@ function makePublishArtifactService(
       idempotencyKey,
       inputDigest,
     );
-    if (replayed !== null) return replayed;
+    if (replayed !== null) {
+      yield* dependencies.contentIngress.ensureReady(replayed.version.contentToken);
+      return replayed;
+    }
 
     const sourceCheckTime = DateTime.formatIso(yield* dependencies.clock.now);
     yield* dependencies.repository.assertPublicationSourceReady(
@@ -312,11 +324,13 @@ function makePublishArtifactService(
     );
     yield* storeFiles(command.manifest, command.files);
 
+    const contentToken = dependencies.ids.contentToken();
+    yield* dependencies.contentIngress.ensureReady(contentToken);
     const createdAt = DateTime.formatIso(yield* dependencies.clock.now);
 
     return yield* dependencies.repository.commitVersion({
       artifactId: command.artifactId,
-      contentToken: dependencies.ids.contentToken(),
+      contentToken,
       createdAt,
       expectedCurrentVersionId: command.expectedCurrentVersionId,
       idempotencyKey,

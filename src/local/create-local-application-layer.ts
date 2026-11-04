@@ -38,6 +38,7 @@ import {
   type ContentAccessDependencies,
   ContentAccessService,
 } from "../application/content-access.js";
+import {routedContentIngress, type ContentIngress} from "../application/content-ingress.js";
 import {ExpiredStagingCleanupService} from
   "../application/expired-staging-cleanup.js";
 import {
@@ -146,6 +147,7 @@ export interface ApplicationAdapters {
   readonly blobs: BlobStore;
   readonly bootstrapAdministratorEmail: string;
   readonly clock: Clock;
+  readonly contentIngress?: ContentIngress;
   readonly externalApiBearerVerifier: BearerCredentialVerifier | null;
   readonly externalMcpBearerVerifier: BearerCredentialVerifier | null;
   readonly externalMcpOAuthVerifier: ExternalMcpBearerVerifier | null;
@@ -225,6 +227,7 @@ export function createApplicationLayer(
     now: Effect.sync(() => DateTime.makeUnsafe(adapters.clock.now())),
   };
   const publishDependencies: PublishArtifactDependencies = {
+    contentIngress: adapters.contentIngress ?? routedContentIngress,
     blobs: {
       put: (write) =>
         Effect.tryPromise({
@@ -667,6 +670,7 @@ export function createApplicationLayer(
   };
 
   const contentDependencies: ContentAccessDependencies = {
+    contentIngress: adapters.contentIngress ?? routedContentIngress,
     clock,
     repository: {
       createContentBootstrap: (command) =>

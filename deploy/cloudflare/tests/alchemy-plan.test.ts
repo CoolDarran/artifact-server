@@ -59,7 +59,15 @@ const workerProvider = Provider.succeed(
     delete: writeForbidden,
   },
 );
+const pagesProjectProvider = Provider.succeed(
+  Cloudflare.Pages.Project,
+  {
+    reconcile: writeForbidden,
+    delete: writeForbidden,
+  },
+);
 const individualProviders = Layer.mergeAll(
+  pagesProjectProvider,
   databaseProvider,
   bucketProvider,
   dnsRecordProvider,
@@ -227,6 +235,51 @@ describe("Alchemy foundation plan", () => {
     ).rejects.toThrow(
       "dnsZoneIds.application does not match the application domain zone inferred by Cloudflare",
     );
+  });
+
+  it("plans a retained Pages gateway with one owned DNS zone and no wildcard route", async () => {
+    const pagesInput = {
+      ...validDeploymentInput,
+      contentDomain: "artifact-server-content.pages.dev",
+      contentOrigin: {
+        kind: "cloudflare-pages" as const,
+        projectName: "artifact-server-content",
+      },
+      dnsZoneIds: {
+        application: validDeploymentInput.dnsZoneIds.application,
+      },
+    };
+    const scratch = Test.scratchStack(options, "pages-origin-plan");
+
+    const resolvedHostnames: string[] = [];
+    const plan = await Test.run(
+      scratch.plan(
+        defineCloudflareFoundation(
+          pagesInput,
+          Redacted.make("test-only-runtime-token-value"),
+          ({hostname}) => {
+            resolvedHostnames.push(hostname);
+            return Effect.succeed(validDeploymentInput.dnsZoneIds.application);
+          },
+        ),
+      ),
+      options,
+    );
+    const resources = Object.values(plan.resources);
+    expect(resources.map(({resource}) => resource.Type).toSorted((left, right) => left.localeCompare(right))).toEqual([
+      "Cloudflare.D1Database",
+      "Cloudflare.Pages.Project",
+      "Cloudflare.R2.Bucket",
+      "Cloudflare.Worker",
+    ]);
+    expect(resolvedHostnames).toEqual([pagesInput.applicationDomain]);
+    const pages = resources.find(({resource}) => resource.Type === "Cloudflare.Pages.Project");
+    expect(pages?.resource.Props).toEqual({name: "artifact-server-content", productionBranch: "main"});
+    expect(pages?.resource.RemovalPolicy).toBe("retain");
+    expect(pages?.resource.Adopt).toBe(true);
+    const application = resources.find(({resource}) => resource.Type === "Cloudflare.Worker");
+    expect(application?.resource.Props).not.toHaveProperty("routes");
+    expect(Object.values(plan.actions)).toHaveLength(1);
   });
 
   it("binds hosted WorkOS settings only as one complete deployment contract", async () => {
