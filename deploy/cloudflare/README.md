@@ -96,7 +96,8 @@ identity, makes the artifact private, exchanges a content session, and opens a
 Review lease. A successful run saves qualification evidence for two days.
 
 The installation token also needs zone-scoped **WAF Edit** permission for
-`danran.one`. The workflow manages one custom skip rule per installation,
+`danran.one` when running `qualify` or a production deployment with external
+verification enabled. That path manages one custom skip rule per installation,
 scoped to the exact application hostname and its HTTP APIs, readiness, login
 redirect, Review frame, and static assets. It skips Browser Integrity Check and
 Security Level challenges for those paths so unattended HTTP and MCP clients
@@ -105,11 +106,21 @@ owned; the workflow creates or patches its own rule and verifies that existing
 rules retain their actions and expressions. Managed WAF rules and application
 authorization continue to apply.
 
-Select `deploy` only after successful qualification of the exact same commit.
-The workflow enforces that requirement before deploying `artifacts.danran.one`
-and adopting `danran-artifact-content`. Both operations require the bootstrap
-administrator email above. The account state Worker may be initialized by
-Alchemy's `--yes` path; durable D1, R2, and Pages resources are retained.
+By default, select `deploy` only after successful qualification of the exact
+same commit. The workflow enforces that requirement before deploying
+`artifacts.danran.one` and adopting `danran-artifact-content`. If the operator
+explicitly accepts deployment before external acceptance, select
+`defer_external_verification: true`. That production run skips the qualification
+requirement, the browser-check exception change, and the public HTTP acceptance
+checks. Its summary records the actor and commit and labels the deployment as
+unverified. It does not create qualification evidence or change zone-wide Bot
+Fight Mode. A successful stack apply confirms resource deployment, not browser
+login, publication, content access, or MCP availability.
+
+Both operations require the bootstrap administrator email above. The account
+state Worker may be initialized by Alchemy's `--yes` path; durable D1, R2, and
+Pages resources are retained. Production uses its own Worker, database, bucket,
+and Pages project; it does not promote or replace the isolated probe's data.
 Live browser login and Review iframe behavior remain separate acceptance gates.
 The custom DNS content configuration below continues to require two owned DNS
 zones; never supply a fabricated zone ID for `pages.dev`.

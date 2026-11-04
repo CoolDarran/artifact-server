@@ -9,6 +9,11 @@ on:
         default: check
         type: choice
         options: [check, qualify, deploy]
+      defer_external_verification:
+        description: Deploy production without live qualification or public HTTP acceptance checks; report it as unverified
+        required: true
+        default: false
+        type: boolean
   push:
     branches: [deploy/cloudflare-preflight]
     paths: [.github/workflows/cloudflare-preflight.yml]
@@ -199,7 +204,8 @@ jobs:
             'OIDC discovery and public signing keys are checked without sending the client secret.',
             'Secret presence does not prove its correctness, the Access policy, or a browser login round trip.',
             'The Pages gateway is deployed only when the explicit qualify or deploy operation is selected.',
-            'The deploy job builds the application, uses the canonical Alchemy stack, and checks live readiness.',
+            'The deploy job builds the application and uses the canonical Alchemy stack.',
+            'External acceptance checks can be explicitly deferred for production; that run remains unverified.',
             '',
           ].join('\n');
           await appendFile(process.env.GITHUB_STEP_SUMMARY, summary);
@@ -207,7 +213,7 @@ jobs:
           NODE
 
   deploy:
-    name: Deploy and verify Cloudflare installation
+    name: Deploy Cloudflare installation
     if: github.event_name == 'workflow_dispatch' && inputs.operation != 'check'
     needs: preflight
     runs-on: ubuntu-latest
@@ -217,8 +223,21 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Record explicitly deferred external verification
+        if: inputs.operation == 'deploy' && inputs.defer_external_verification
+        run: |
+          node --input-type=module <<'NODE'
+          import {appendFile} from 'node:fs/promises';
+          await appendFile(process.env.GITHUB_STEP_SUMMARY, [
+            '## External verification deferred', '',
+            `Requested by ${process.env.GITHUB_ACTOR} for commit ${process.env.GITHUB_SHA}.`, '',
+            'This production deployment intentionally proceeds without live Pages qualification or public HTTP acceptance checks.',
+            'A successful stack apply proves resource deployment only; browser login, publishing, content access, and MCP remain unverified.',
+            'The zone-wide Bot Fight Mode setting is not changed by this workflow.', '',
+          ].join('\n'));
+          NODE
       - name: Require live qualification of this commit
-        if: inputs.operation == 'deploy'
+        if: inputs.operation == 'deploy' && !inputs.defer_external_verification
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -298,6 +317,7 @@ jobs:
           await appendFile(process.env.GITHUB_ENV, `ARTIFACT_SERVER_CLOUDFLARE_CONFIG=${JSON.stringify(configuration)}\nALCHEMY_STAGE=${configuration.stage}\nARTIFACT_SERVER_APPLICATION_ORIGIN=https://${configuration.applicationDomain}\n`);
           NODE
       - name: Configure machine endpoint browser-check exception
+        if: inputs.operation == 'qualify' || !inputs.defer_external_verification
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         shell: bash
@@ -359,6 +379,7 @@ jobs:
           console.log(`Scoped browser-check exception installed for ${host}; ${preserved.length} unrelated rules preserved.`);
           NODE
       - name: Apply canonical Alchemy stack
+        id: apply
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
@@ -382,7 +403,7 @@ jobs:
           retention-days: 2
           if-no-files-found: error
       - name: Check production readiness and login redirect
-        if: inputs.operation == 'deploy'
+        if: inputs.operation == 'deploy' && !inputs.defer_external_verification
         run: |
           node --input-type=module <<'NODE'
           for (const path of ['/health', '/ready', '/auth/login']) {
@@ -394,4 +415,23 @@ jobs:
             await response.body?.cancel();
             console.log(`${path}: PASS`);
           }
+          NODE
+      - name: Report production deployment result
+        if: always() && inputs.operation == 'deploy'
+        env:
+          STACK_OUTCOME: ${{ steps.apply.outcome }}
+          VERIFICATION_DEFERRED: ${{ inputs.defer_external_verification }}
+        run: |
+          node --input-type=module <<'NODE'
+          import {appendFile} from 'node:fs/promises';
+          const applied = process.env.STACK_OUTCOME === 'success';
+          const deferred = process.env.VERIFICATION_DEFERRED === 'true';
+          await appendFile(process.env.GITHUB_STEP_SUMMARY, [
+            '## Production deployment result', '',
+            `Canonical Alchemy stack apply: ${process.env.STACK_OUTCOME || 'not run'}.`,
+            applied ? 'Application: https://artifacts.danran.one/review' : 'Production deployment is not confirmed.',
+            applied ? 'MCP: https://artifacts.danran.one/mcp' : '',
+            applied ? 'Content gateway: danran-artifact-content.pages.dev (version-specific URLs are issued by the application).' : '',
+            deferred ? 'External acceptance: deferred; do not interpret this run as verified service availability.' : 'External HTTP checks ran separately; see their step result.', '',
+          ].filter(Boolean).join('\n'));
           NODE
