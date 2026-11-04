@@ -155,20 +155,33 @@ jobs:
             rows.push('| Cloudflare Access discovery and signing keys | FAIL |');
             console.error('Cloudflare Access discovery or signing-key check failed.');
           }
-          if (process.env.OPERATION === 'qualify') {
-            try {
-              const response = await fetch('https://probe-artifacts.danran.one/ready', {
-                redirect: 'manual', signal: AbortSignal.timeout(15000),
-              });
-              const body = await response.text();
-              console.log('Existing probe endpoint:', JSON.stringify({
-                status: response.status, ray: response.headers.get('cf-ray'),
-                mitigated: response.headers.get('cf-mitigated'),
-                errorCode: /error code: *([0-9]+)/iu.exec(body)?.[1] ?? null,
-                title: /<title>([^<]{0,160})<\/title>/iu.exec(body)?.[1] ?? null,
-              }));
-            } catch {
-              console.log('The probe endpoint is not reachable before deployment.');
+          if (['check', 'qualify'].includes(process.env.OPERATION)) {
+            const probes = [
+              {path: '/ready'},
+              {path: '/health'},
+              {path: '/api/v1/artifacts'},
+              {path: '/api/v1/artifacts', authenticated: true},
+              {path: '/mcp'},
+              {path: '/auth/login'},
+            ];
+            for (const probe of probes) {
+              try {
+                const response = await fetch(new URL(probe.path, 'https://probe-artifacts.danran.one'), {
+                  headers: probe.authenticated
+                    ? {Authorization: `Bearer ${process.env.ARTIFACT_SERVER_API_TOKEN}`}
+                    : undefined,
+                  redirect: 'manual', signal: AbortSignal.timeout(15000),
+                });
+                console.log('Existing probe endpoint:', JSON.stringify({
+                  path: probe.path, authenticated: probe.authenticated === true,
+                  status: response.status, ray: response.headers.get('cf-ray'),
+                  mitigated: response.headers.get('cf-mitigated'),
+                  contentType: response.headers.get('content-type'),
+                }));
+                await response.body?.cancel();
+              } catch {
+                console.log(`Existing probe endpoint ${probe.path}: request did not complete.`);
+              }
             }
           }
           const summary = [
