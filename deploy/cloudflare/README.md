@@ -95,6 +95,16 @@ check publishes through staged upload, verifies exact version bytes and retry
 identity, makes the artifact private, exchanges a content session, and opens a
 Review lease. A successful run saves qualification evidence for two days.
 
+The installation token also needs zone-scoped **WAF Edit** permission for
+`danran.one`. The workflow manages one custom skip rule per installation,
+scoped to the exact application hostname and its HTTP APIs, readiness, login
+redirect, Review frame, and static assets. It skips Browser Integrity Check and
+Security Level challenges for those paths so unattended HTTP and MCP clients
+can reach application authentication. Other zone rules remain independently
+owned; the workflow creates or patches its own rule and verifies that existing
+rules retain their actions and expressions. Managed WAF rules and application
+authorization continue to apply.
+
 Select `deploy` only after successful qualification of the exact same commit.
 The workflow enforces that requirement before deploying `artifacts.danran.one`
 and adopting `danran-artifact-content`. Both operations require the bootstrap

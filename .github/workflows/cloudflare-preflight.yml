@@ -102,10 +102,12 @@ jobs:
               const body = await response.json();
               let passed = response.ok && body.success === true;
               if (name === 'Application DNS zone') {
-                passed = passed && Array.isArray(body.result) && body.result.some(
-                  (zone) => zone.name === 'danran.one' && zone.status === 'active'
-                    && zone.account?.id === accountId,
-                );
+                const zone = Array.isArray(body.result) ? body.result.find(
+                  (item) => item.name === 'danran.one' && item.status === 'active'
+                    && item.account?.id === accountId,
+                ) : undefined;
+                passed = passed && zone !== undefined;
+                if (passed) checks.push(['WAF browser-check rules', `/zones/${zone.id}/rulesets`]);
               }
               failed ||= !passed;
               const status = passed ? 'PASS' : `FAIL (HTTP ${response.status})`;
@@ -281,6 +283,67 @@ jobs:
             oidcIssuer: process.env.OIDC_ISSUER, oidcScopes: 'openid email profile',
           };
           await appendFile(process.env.GITHUB_ENV, `ARTIFACT_SERVER_CLOUDFLARE_CONFIG=${JSON.stringify(configuration)}\nALCHEMY_STAGE=${configuration.stage}\nARTIFACT_SERVER_APPLICATION_ORIGIN=https://${configuration.applicationDomain}\n`);
+          NODE
+      - name: Configure machine endpoint browser-check exception
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          const configuration = JSON.parse(process.env.ARTIFACT_SERVER_CLOUDFLARE_CONFIG);
+          const host = configuration.applicationDomain;
+          const zone = configuration.dnsZoneIds.application;
+          if (!['probe-artifacts.danran.one', 'artifacts.danran.one'].includes(host)
+            || !/^[a-f0-9]{32}$/.test(zone)) throw new Error('Unexpected security-rule scope.');
+          const api = `https://api.cloudflare.com/client/v4/zones/${zone}/rulesets`;
+          const call = async (url, method = 'GET', body) => {
+            const response = await fetch(url, {
+              method,
+              headers: {Authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN}`, 'Content-Type': 'application/json'},
+              body: body === undefined ? undefined : JSON.stringify(body),
+              redirect: 'error', signal: AbortSignal.timeout(15000),
+            });
+            if (method === 'GET' && response.status === 404) return undefined;
+            const envelope = await response.json();
+            if (!response.ok || envelope.success !== true) {
+              throw new Error(`Scoped browser-check rule ${method} failed: HTTP ${response.status}.`);
+            }
+            return envelope.result;
+          };
+          const ref = host.startsWith('probe-') ? 'artifact_server_probe_machine' : 'artifact_server_production_machine';
+          const rule = {
+            ref, action: 'skip', enabled: true,
+            description: `Artifact Server machine endpoints: ${host}`,
+            expression: `(http.host eq "${host}" and (http.request.uri.path in {"/health" "/ready" "/mcp" "/auth/login" "/review-frame" "/.well-known/oauth-protected-resource"} or starts_with(http.request.uri.path, "/api/") or starts_with(http.request.uri.path, "/mcp/") or starts_with(http.request.uri.path, "/assets/") or starts_with(http.request.uri.path, "/.well-known/oauth-protected-resource/")))`,
+            action_parameters: {products: ['bic', 'securityLevel']},
+            logging: {enabled: true},
+          };
+          const entrypoint = await call(`${api}/phases/http_request_firewall_custom/entrypoint`);
+          const preserved = (entrypoint?.rules ?? []).filter(item => item.ref !== ref);
+          if (entrypoint) {
+            const existing = entrypoint.rules.filter(item => item.ref === ref);
+            if (existing.length > 1) throw new Error('Duplicate managed browser-check rules.');
+            if (existing.length === 1) {
+              await call(`${api}/${entrypoint.id}/rules/${existing[0].id}`, 'PATCH', rule);
+            } else {
+              await call(`${api}/${entrypoint.id}/rules`, 'POST', rule);
+            }
+          } else {
+            await call(api, 'POST', {name: 'default', kind: 'zone', phase: 'http_request_firewall_custom', rules: [rule]});
+          }
+          const actual = await call(`${api}/phases/http_request_firewall_custom/entrypoint`);
+          const installed = actual?.rules?.find(item => item.ref === ref);
+          if (installed?.expression !== rule.expression || installed.action !== 'skip'
+            || installed.enabled !== true || JSON.stringify(installed.action_parameters?.products) !== JSON.stringify(rule.action_parameters.products)) {
+            throw new Error('The scoped browser-check exception did not match the requested rule.');
+          }
+          for (const previous of preserved) {
+            const current = actual.rules.find(item => item.id === previous.id);
+            if (!current || ['ref', 'action', 'expression', 'enabled', 'description', 'action_parameters'].some(
+              key => JSON.stringify(current[key]) !== JSON.stringify(previous[key]),
+            )) throw new Error('An unrelated zone rule changed during installation.');
+          }
+          console.log(`Scoped browser-check exception installed for ${host}; ${preserved.length} unrelated rules preserved.`);
           NODE
       - name: Apply canonical Alchemy stack
         env:
